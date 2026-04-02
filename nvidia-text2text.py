@@ -105,41 +105,68 @@ def chat_with_nvidia(message, history, model_choice, instructions,
             "stream": True,
         }
 
-        # Handle different parameter names for different models based on thinking parameters.txt
+        # --- Thinking / reasoning parameter logic ---
+        # Only models confirmed to support thinking in thinking_parameters.txt are
+        # included here. All other models (LLaMA, Mixtral, MiniMax, Qwen-coder)
+        # receive no thinking parameters, regardless of the checkbox state.
+        #
+        # Allowlist by parameter style:
+        #   "reasoning_effort"          : mistral-small
+        #   enable_thinking (True/False): glm, qwen3.5 (non-coder)
+        #   thinking (True/False)       : kimi, deepseek
+        #
+        # Models with NO thinking support (never send thinking params):
+        #   meta/llama-*, mistralai/mixtral-*, minimaxai/minimax-*,
+        #   qwen/qwen3-coder-*
+
         model_lower = model_choice.lower()
-        if reasoning_enabled:
+
+        # Identify models that have NO thinking support — skip all param injection.
+        no_thinking_support = (
+            "llama" in model_lower
+            or "mixtral-8x22b-instruct-v0.1" in model_lower
+            or "minimax-m2.5" in model_lower
+            or "qwen3-coder-480b-a35b-instruct" in model_lower
+        )
+
+        if no_thinking_support:
+            # Never send thinking params to these models.
+            pass
+
+        elif reasoning_enabled:
             if "mistral-small" in model_lower:
+                # Uses top-level reasoning_effort, not chat_template_kwargs
                 request_params["reasoning_effort"] = "high"
             elif "glm" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
                 }
             elif "qwen" in model_lower:
+                # Applies to qwen3.5 variants (non-coder, already excluded above)
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"enable_thinking": True}
                 }
-            elif any(x in model_lower for x in ["kimi", "deepseek"]):
+            elif "kimi" in model_lower or "deepseek" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"thinking": True}
                 }
-            else:
-                # Default fallback for other potential thinking models
-                request_params["extra_body"] = {
-                    "chat_template_kwargs": {"thinking": True}
-                }
+            # Any other unrecognised model: do NOT send thinking params by default.
+
         else:
-            # Explicitly turn off thinking for models that might default to it
+            # Reasoning disabled — explicitly turn off thinking only for models
+            # that support it (to override any server-side defaults).
             if "mistral-small" in model_lower:
-                pass # usually omitting reasoning_effort defaults to none/low
-            elif "glm" in model_lower or "qwen" in model_lower:
+                # Omitting reasoning_effort disables it for Mistral Small.
+                pass
+            elif "glm" in model_lower:
+                request_params["extra_body"] = {
+                    "chat_template_kwargs": {"enable_thinking": False, "clear_thinking": False}
+                }
+            elif "qwen" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"enable_thinking": False}
                 }
-            elif any(x in model_lower for x in ["kimi", "deepseek"]):
-                request_params["extra_body"] = {
-                    "chat_template_kwargs": {"thinking": False}
-                }
-            else:
+            elif "kimi" in model_lower or "deepseek" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"thinking": False}
                 }
@@ -257,7 +284,7 @@ with gr.Blocks(title="💬 NVIDIA NIM Chatbot") as demo:
                 value=False
             )
             temperature = gr.Slider(0.0, 2.0, value=1.0, step=0.1, label="Temperature")
-            max_tokens = gr.Slider(100, 65535, value=8192, step=256, label="Max Tokens")
+            max_tokens = gr.Slider(1024, 262144, value=8192, step=1024, label="Max Tokens")
             thoughts_box = gr.Markdown(label="🧠 Model Thoughts", value="*Reasoning will appear here...*")
 
     inputs = [msg, chatbot, model_choice, instructions, temperature, max_tokens, reasoning_enabled]
