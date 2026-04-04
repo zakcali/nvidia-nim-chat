@@ -46,6 +46,7 @@ def load_models(filepath="nvidia-models.txt"):
         "deepseek-ai/deepseek-v3.1",
         "qwen/qwen3-coder-480b-a35b-instruct",
         "qwen/qwen3.5-397b-a17b",
+        "google/gemma-4-31b-it",
         "mistralai/mistral-small-4-119b-2603",
         "mistralai/mixtral-8x22b-instruct-v0.1",
         "meta/llama-3.1-405b-instruct",
@@ -112,12 +113,14 @@ def chat_with_nvidia(message, history, model_choice, instructions,
         #
         # Allowlist by parameter style:
         #   "reasoning_effort"          : mistral-small
-        #   enable_thinking (True/False): glm, qwen3.5 (non-coder)
+        #   enable_thinking (True/False): glm, qwen3.5 (non-coder), gemma
         #   thinking (True/False)       : kimi, deepseek
         #
         # Models with NO thinking support (never send thinking params):
         #   meta/llama-*, mistralai/mixtral-*, minimaxai/minimax-*,
         #   qwen/qwen3-coder-*
+        #
+        # Gemma note: also requires top_k=64 for its recommended inference settings.
 
         model_lower = model_choice.lower()
 
@@ -128,6 +131,10 @@ def chat_with_nvidia(message, history, model_choice, instructions,
             or "minimax-m2.5" in model_lower
             or "qwen3-coder-480b-a35b-instruct" in model_lower
         )
+
+        # Gemma requires top_k=64 regardless of reasoning mode (per reference).
+        if "gemma-4" in model_lower:
+            request_params["extra_body"] = {"top_k": 64}
 
         if no_thinking_support:
             # Never send thinking params to these models.
@@ -140,6 +147,12 @@ def chat_with_nvidia(message, history, model_choice, instructions,
             elif "glm" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
+                }
+            elif "gemma-4" in model_lower:
+                # Gemma uses enable_thinking; preserve top_k already set above.
+                request_params["extra_body"] = {
+                    "top_k": 64,
+                    "chat_template_kwargs": {"enable_thinking": True},
                 }
             elif "qwen" in model_lower:
                 # Applies to qwen3.5 variants (non-coder, already excluded above)
@@ -161,6 +174,12 @@ def chat_with_nvidia(message, history, model_choice, instructions,
             elif "glm" in model_lower:
                 request_params["extra_body"] = {
                     "chat_template_kwargs": {"enable_thinking": False, "clear_thinking": False}
+                }
+            elif "gemma" in model_lower:
+                # Keep top_k; explicitly disable thinking.
+                request_params["extra_body"] = {
+                    "top_k": 64,
+                    "chat_template_kwargs": {"enable_thinking": False},
                 }
             elif "qwen" in model_lower:
                 request_params["extra_body"] = {
