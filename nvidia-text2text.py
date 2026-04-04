@@ -303,7 +303,7 @@ with gr.Blocks(title="💬 NVIDIA NIM Chatbot") as demo:
                 value=False
             )
             temperature = gr.Slider(0.0, 2.0, value=1.0, step=0.1, label="Temperature")
-            max_tokens = gr.Slider(1024, 262144, value=8192, step=1024, label="Max Tokens")
+            max_tokens = gr.Slider(100, 65535, value=8192, step=256, label="Max Tokens")
             thoughts_box = gr.Markdown(label="🧠 Model Thoughts", value="*Reasoning will appear here...*")
 
     inputs = [msg, chatbot, model_choice, instructions, temperature, max_tokens, reasoning_enabled]
