@@ -99,8 +99,8 @@ When the **Enable Reasoning** checkbox is checked, the app sends model-specific 
 | Model family | Parameter used |
 |---|---|
 | `mistral-small` | `reasoning_effort: "high"` |
-| `glm`, `qwen` | `enable_thinking: true` |
-| `kimi`, `deepseek` | `thinking: true` |
+| `glm`, `qwen`, `gemma-4` | `enable_thinking: True` |
+| `kimi`, `deepseek` | `thinking: True` |
 
 Reasoning traces appear in the **🧠 Model Thoughts** panel on the right side of the UI.
 
