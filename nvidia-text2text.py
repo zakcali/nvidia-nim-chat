@@ -317,7 +317,6 @@ with gr.Blocks(title="💬 NVIDIA NIM Chatbot") as demo:
     clear_btn.click(
         lambda: ([], "", "*Reasoning will appear here...*", gr.update(visible=False)),
         outputs=[chatbot, msg, thoughts_box, download_btn],
-        cancels=[e_submit, e_click],
         queue=False
     )
 
