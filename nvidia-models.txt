@@ -1,3 +1,5 @@
+z-ai/glm-5.1
+z-ai/glm4.7
 minimaxai/minimax-m2.7
 moonshotai/kimi-k2.5
 minimaxai/minimax-m2.5
