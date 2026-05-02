@@ -1,0 +1,3 @@
+moonshotai/kimi-k2.6
+mistralai/mistral-large-3-675b-instruct-2512
+nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
