@@ -8,6 +8,8 @@ import base64
 import time
 import tempfile
 import atexit
+import httpx
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pdf2image import convert_from_path
 
 # ── Temp-file cleanup ──────────────────────────────────────────────────────────
@@ -73,11 +75,24 @@ if not NVIDIA_API_KEY:
     raise EnvironmentError("NVIDIA_API_KEY environment variable is not set.")
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+# Use split timeouts so a slow server doesn't silently block forever:
+#   connect  – fail fast if the network is unreachable (10 s)
+#   read     – generous window for the server to start streaming (180 s)
+#   write    – time to finish uploading the request body (30 s)
+#   pool     – time waiting for an httpx connection from the pool (5 s)
+_http_client = httpx.Client(
+    timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0)
+)
 client = OpenAI(
     base_url=NVIDIA_BASE_URL,
     api_key=NVIDIA_API_KEY,
-    timeout=180.0,  # 3-minute hard timeout on the HTTP connection
+    http_client=_http_client,
 )
+
+# Thread-pool used to run the blocking .create() call off the generator thread
+# so we can yield heartbeat updates while waiting for the first token.
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # ── PDF / image helpers ────────────────────────────────────────────────────────
 MAX_IMAGE_DIMENSION = 2240
@@ -343,6 +358,13 @@ def chat(message, history, api_history, model_choice, instructions,
         messages.append({"role": m["role"], "content": m["content"]})
 
     # ── API call ──────────────────────────────────────────────────────────────
+    # FIRST_TOKEN_TIMEOUT: how long we wait for the server to start streaming.
+    # The httpx read timeout (180 s) is the hard backstop; this softer deadline
+    # lets us show a live "waiting…" counter and abort cleanly via Stop.
+    FIRST_TOKEN_TIMEOUT = 180.0
+    # How often we poll the Future while waiting for the stream to open (seconds)
+    HEARTBEAT_INTERVAL  = 1.0
+
     try:
         extra_body, top_level_extra = build_reasoning_params(model_choice, effort)
 
@@ -360,29 +382,46 @@ def chat(message, history, api_history, model_choice, instructions,
         if top_level_extra:
             request_params.update(top_level_extra)
 
-        FIRST_TOKEN_TIMEOUT = 180.0  # 3 minutes to receive any response
+        # ── Submit the blocking .create() call to a background thread ─────────
+        # This unblocks the generator immediately so Gradio can render heartbeats
+        # and honour the Stop button while the server queues / warms up.
+        future = _executor.submit(client.chat.completions.create, **request_params)
 
-        completion = client.chat.completions.create(**request_params)
+        wait_start = time.time()
+        completion = None
 
+        while completion is None:
+            elapsed = time.time() - wait_start
+            if elapsed > FIRST_TOKEN_TIMEOUT:
+                future.cancel()
+                history[-1]["content"]     = (
+                    f"❌ Timed out: server did not start responding within "
+                    f"{int(FIRST_TOKEN_TIMEOUT)} seconds."
+                )
+                api_history[-1]["content"] = ""
+                yield history, api_history, "", "Timed out waiting for first token.", initial_dl
+                return
+
+            # Show a live waiting counter so the user knows we're still alive
+            wait_secs = int(elapsed)
+            history[-1]["content"] = f"⏳ Waiting for server… {wait_secs}s"
+            yield history, api_history, None, "*Waiting for server…*", initial_dl
+
+            try:
+                completion = future.result(timeout=HEARTBEAT_INTERVAL)
+            except FuturesTimeoutError:
+                # Server hasn't replied yet; loop and yield another heartbeat
+                pass
+
+        # ── Stream chunks ─────────────────────────────────────────────────────
         full_content      = ""
         reasoning_content = ""
         last_yield_time   = time.time()
         flush_interval_s  = 0.04
-        first_token_time  = time.time()
-        got_first_token   = False
 
         for chunk in completion:
             if not chunk.choices:
                 continue
-
-            # ── Timeout: no first token within 3 minutes ──────────────────────
-            if not got_first_token:
-                if time.time() - first_token_time > FIRST_TOKEN_TIMEOUT:
-                    history[-1]["content"]     = "❌ Timed out: no response received within 3 minutes."
-                    api_history[-1]["content"] = ""
-                    yield history, api_history, "", "Timed out waiting for first token.", initial_dl
-                    return
-                got_first_token = True
 
             delta         = chunk.choices[0].delta
             new_content   = getattr(delta, "content", None) or None
@@ -400,11 +439,11 @@ def chat(message, history, api_history, model_choice, instructions,
                 last_yield_time = time.time()
                 yield history, api_history, None, reasoning_content, initial_dl
 
-        # ── Timeout: API connected but returned nothing at all ─────────────────
-        if not got_first_token:
-            history[-1]["content"]     = "❌ Timed out: no response received within 3 minutes."
+        # ── Edge-case: stream opened but was immediately empty ────────────────
+        if not full_content and not reasoning_content:
+            history[-1]["content"]     = "⚠️ Server returned an empty response."
             api_history[-1]["content"] = ""
-            yield history, api_history, "", "Timed out waiting for first token.", initial_dl
+            yield history, api_history, "", "Empty response from server.", initial_dl
             return
 
         # ── Save last response to temp file ───────────────────────────────────
