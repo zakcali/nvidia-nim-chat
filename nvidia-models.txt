@@ -1,6 +1,6 @@
 moonshotai/kimi-k2.6
 minimaxai/minimax-m2.7
-z-ai/glm5.1
+z-ai/glm-5.1
 nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 deepseek-ai/deepseek-v4-pro
 deepseek-ai/deepseek-v4-flash
